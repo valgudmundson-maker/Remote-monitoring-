@@ -16,6 +16,8 @@ app = Flask(__name__)
 # Intraday resolution used for "same day" analysis.
 INTERVAL = "5m"
 PERIOD = "1d"
+# Daily history window for the 50- and 200-day moving averages.
+DAILY_PERIOD = "1y"
 
 
 def _fetch_history(ticker: str):
@@ -29,6 +31,11 @@ def _fetch_history(ticker: str):
     tk = yf.Ticker(ticker)
     df = tk.history(period=PERIOD, interval=INTERVAL)
     return tk, df
+
+
+def _fetch_daily(tk):
+    """Fetch ~1 year of daily OHLCV data (for the 50/200-day MAs)."""
+    return tk.history(period=DAILY_PERIOD, interval="1d")
 
 
 def analyze(ticker: str) -> dict:
@@ -59,6 +66,21 @@ def analyze(ticker: str) -> dict:
     bb_mid, bb_upper, bb_lower = ta.bollinger_bands(close, 20)
     vwap_series = ta.vwap(df)
     atr14 = ta.atr(df, 14)
+    lux_osc, lux_signal = ta.ultimate_rsi(close, 14, 14)
+
+    # 50- and 200-day simple moving averages require daily data over a longer
+    # window than the intraday session, so fetch it separately.
+    sma50 = sma200 = None
+    try:
+        daily = _fetch_daily(tk)
+        if daily is not None and not daily.empty:
+            dclose = daily["Close"]
+            if len(dclose) >= 50:
+                sma50 = ta.sma(dclose, 50).iloc[-1]
+            if len(dclose) >= 200:
+                sma200 = ta.sma(dclose, 200).iloc[-1]
+    except Exception:
+        pass  # daily MAs are best-effort; intraday analysis still works.
 
     last = -1
     price = float(close.iloc[last])
@@ -85,6 +107,10 @@ def analyze(ticker: str) -> dict:
         "bb_lower": ta._round(bb_lower.iloc[last]),
         "vwap": ta._round(vwap_series.iloc[last]),
         "atr": ta._round(atr14.iloc[last]),
+        "lux_osc": ta._round(lux_osc.iloc[last]),
+        "lux_signal": ta._round(lux_signal.iloc[last]),
+        "sma50": ta._round(sma50),
+        "sma200": ta._round(sma200),
     }
 
     signals = ta.build_signals(latest)
@@ -94,6 +120,8 @@ def analyze(ticker: str) -> dict:
         "times": [t.strftime("%H:%M") for t in df.index],
         "close": [ta._round(v) for v in close.tolist()],
         "vwap": [ta._round(v) for v in vwap_series.tolist()],
+        "lux_osc": [ta._round(v) for v in lux_osc.tolist()],
+        "lux_signal": [ta._round(v) for v in lux_signal.tolist()],
     }
 
     return {

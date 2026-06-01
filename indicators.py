@@ -53,6 +53,35 @@ def bollinger_bands(series: pd.Series, period: int = 20, num_std: float = 2.0):
     return middle, upper, lower
 
 
+def ultimate_rsi(src: pd.Series, length: int = 14, smooth: int = 14):
+    """LuxAlgo "Ultimate RSI" oscillator (open-source LuxAlgo indicator).
+
+    A range-aware variant of RSI: instead of raw price changes it measures
+    change relative to the rolling high/low range, then normalises to 0-100.
+    Returns (oscillator, signal_line). Overbought ~80, oversold ~20, midline 50.
+    """
+    upper = src.rolling(window=length, min_periods=1).max()
+    lower = src.rolling(window=length, min_periods=1).min()
+    r = upper - lower
+    d = src.diff()
+
+    # Use the full range when the channel expands, otherwise the bar change.
+    diff = np.where(
+        upper > upper.shift(1), r,
+        np.where(lower < lower.shift(1), -r, d),
+    )
+    diff = pd.Series(diff, index=src.index).fillna(0.0)
+
+    # Wilder's (RMA) smoothing, matching the LuxAlgo default.
+    num = diff.ewm(alpha=1 / length, adjust=False).mean()
+    den = diff.abs().ewm(alpha=1 / length, adjust=False).mean()
+    arsi = (num / den.replace(0, np.nan)) * 50 + 50
+
+    # Signal line: EMA of the oscillator (LuxAlgo default smoothing).
+    signal = arsi.ewm(span=smooth, adjust=False).mean()
+    return arsi, signal
+
+
 def vwap(df: pd.DataFrame) -> pd.Series:
     """Volume Weighted Average Price (cumulative over the session)."""
     typical_price = (df["High"] + df["Low"] + df["Close"]) / 3
@@ -127,6 +156,40 @@ def build_signals(latest: dict) -> list:
             signals.append(("Bollinger", "bullish", "Price at/below lower band"))
         else:
             signals.append(("Bollinger", "neutral", "Price within bands"))
+
+    lux = latest.get("lux_osc")
+    lux_sig = latest.get("lux_signal")
+    if lux is not None:
+        if lux >= 80:
+            signals.append(("LuxAlgo", "bearish", f"Overbought (osc {lux})"))
+        elif lux <= 20:
+            signals.append(("LuxAlgo", "bullish", f"Oversold (osc {lux})"))
+        elif lux_sig is not None and lux > lux_sig:
+            signals.append(("LuxAlgo", "bullish", "Oscillator above signal line"))
+        elif lux_sig is not None:
+            signals.append(("LuxAlgo", "bearish", "Oscillator below signal line"))
+        else:
+            signals.append(("LuxAlgo", "neutral", f"Oscillator {lux}"))
+
+    sma50 = latest.get("sma50")
+    if price is not None and sma50 is not None:
+        if price > sma50:
+            signals.append(("SMA(50)", "bullish", "Price above 50-day MA"))
+        else:
+            signals.append(("SMA(50)", "bearish", "Price below 50-day MA"))
+
+    sma200 = latest.get("sma200")
+    if price is not None and sma200 is not None:
+        if price > sma200:
+            signals.append(("SMA(200)", "bullish", "Price above 200-day MA"))
+        else:
+            signals.append(("SMA(200)", "bearish", "Price below 200-day MA"))
+
+    if sma50 is not None and sma200 is not None:
+        if sma50 > sma200:
+            signals.append(("Trend", "bullish", "Golden cross (50d > 200d)"))
+        else:
+            signals.append(("Trend", "bearish", "Death cross (50d < 200d)"))
 
     return [{"name": n, "sentiment": s, "detail": d} for n, s, d in signals]
 
