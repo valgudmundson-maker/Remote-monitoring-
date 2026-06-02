@@ -46,6 +46,20 @@ python app.py
 
 Then open <http://localhost:5000> in your browser and enter a ticker.
 
+## Demo mode (no network / outside market hours)
+
+To preview the full UI — charts, oscillator and signals — without live market
+data, run in **demo mode**, which serves realistic synthetic data:
+
+```bash
+python app.py --demo        # or:  DEMO=1 python app.py
+```
+
+The synthetic data is deterministic per ticker (so `AAPL` looks the same each
+run, but differs from `TSLA`) and anchored to a normal trading session. This is
+handy for trying the app on weekends, after hours, or where Yahoo Finance is
+unreachable. It is clearly synthetic and not real market data.
+
 ## API
 
 The frontend is powered by a small JSON API you can also call directly:

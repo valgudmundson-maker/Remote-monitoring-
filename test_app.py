@@ -104,6 +104,24 @@ def test_analyze_full_flow():
     assert res["overall"] in ("bullish", "bearish", "neutral")
 
 
+def test_demo_mode_offline(monkeypatch):
+    """Demo mode must produce a full result with no network access."""
+    import app
+
+    # Ensure any real yfinance import would fail, proving demo uses no network.
+    monkeypatch.setitem(sys.modules, "yfinance", None)
+    monkeypatch.setattr(app, "DEMO", True)
+
+    res = app.analyze("AAPL")
+    assert res["error"] is None
+    m = res["metrics"]
+    assert m["price"] is not None and m["sma50"] is not None and m["sma200"] is not None
+
+    # Deterministic per ticker, distinct across tickers.
+    assert app.analyze("AAPL")["metrics"]["price"] == m["price"]
+    assert app.analyze("TSLA")["metrics"]["price"] != m["price"]
+
+
 def test_api_endpoint():
     _install_fake_yfinance()
     import app

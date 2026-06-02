@@ -6,7 +6,11 @@ ATR and a set of derived bullish/bearish signals.
 """
 
 import datetime as dt
+import os
+import zlib
 
+import numpy as np
+import pandas as pd
 from flask import Flask, jsonify, render_template, request
 
 import indicators as ta
@@ -19,13 +23,53 @@ PERIOD = "1d"
 # Daily history window for the 50- and 200-day moving averages.
 DAILY_PERIOD = "1y"
 
+# Demo mode serves realistic synthetic data instead of calling Yahoo Finance,
+# so the UI is fully usable offline / outside market hours. Toggle with the
+# DEMO=1 env var or the --demo command-line flag.
+DEMO = os.environ.get("DEMO", "").lower() in ("1", "true", "yes")
+
+
+def _demo_rng(ticker: str, salt: int = 0):
+    """Deterministic RNG seeded by the ticker (stable across runs)."""
+    seed = zlib.crc32(ticker.encode()) + salt
+    return np.random.default_rng(seed)
+
+
+def _demo_ohlcv(ticker: str, n: int, freq: str, end: pd.Timestamp, vol: float, salt: int):
+    """Build a synthetic OHLCV DataFrame via a gentle random walk."""
+    rng = _demo_rng(ticker, salt)
+    base = 50 + zlib.crc32(ticker.encode()) % 350  # per-ticker price level
+    steps = rng.normal(0, vol, n)
+    close = base + np.cumsum(steps)
+    close = np.maximum(close, 1.0)
+    opens = np.r_[close[0], close[:-1]]
+    spread = np.abs(rng.normal(0, vol, n)) + vol * 0.5
+    high = np.maximum(opens, close) + spread
+    low = np.minimum(opens, close) - spread
+    idx = pd.date_range(end=end, periods=n, freq=freq, tz="America/New_York")
+    return pd.DataFrame(
+        {
+            "Open": opens,
+            "High": high,
+            "Low": np.maximum(low, 0.5),
+            "Close": close,
+            "Volume": rng.integers(1_000, 50_000, n),
+        },
+        index=idx,
+    )
+
 
 def _fetch_history(ticker: str):
-    """Fetch same-day intraday OHLCV data for a ticker via yfinance.
+    """Fetch same-day intraday OHLCV data for a ticker.
 
-    Imported lazily so the module loads even if the network/yfinance is
-    unavailable at import time.
+    In demo mode returns synthetic data; otherwise pulls from Yahoo Finance via
+    yfinance (imported lazily so the module loads even if it is unavailable).
     """
+    if DEMO:
+        # Anchor the synthetic session to a realistic market close (16:00 ET).
+        close_time = pd.Timestamp.now(tz="America/New_York").normalize() + pd.Timedelta(hours=15, minutes=55)
+        return None, _demo_ohlcv(ticker, 78, "5min", close_time, vol=0.4, salt=1)
+
     import yfinance as yf
 
     tk = yf.Ticker(ticker)
@@ -33,8 +77,11 @@ def _fetch_history(ticker: str):
     return tk, df
 
 
-def _fetch_daily(tk):
+def _fetch_daily(tk, ticker: str):
     """Fetch ~1 year of daily OHLCV data (for the 50/200-day MAs)."""
+    if DEMO:
+        today = pd.Timestamp.now(tz="America/New_York").normalize()
+        return _demo_ohlcv(ticker, 260, "1D", today, vol=1.2, salt=2)
     return tk.history(period=DAILY_PERIOD, interval="1d")
 
 
@@ -72,7 +119,7 @@ def analyze(ticker: str) -> dict:
     # window than the intraday session, so fetch it separately.
     sma50 = sma200 = None
     try:
-        daily = _fetch_daily(tk)
+        daily = _fetch_daily(tk, ticker)
         if daily is not None and not daily.empty:
             dclose = daily["Close"]
             if len(dclose) >= 50:
@@ -157,4 +204,10 @@ def api_analyze():
 
 
 if __name__ == "__main__":
+    import sys
+
+    if "--demo" in sys.argv:
+        DEMO = True
+        print("Running in DEMO mode: serving synthetic data (no live market data).")
+
     app.run(host="0.0.0.0", port=5000, debug=True)
