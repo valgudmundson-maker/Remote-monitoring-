@@ -60,6 +60,25 @@ run, but differs from `TSLA`) and anchored to a normal trading session. This is
 handy for trying the app on weekends, after hours, or where Yahoo Finance is
 unreachable. It is clearly synthetic and not real market data.
 
+## Deploy (access it from your phone / anywhere)
+
+Running locally only works on your own machine. To open the app from a phone or
+share a link, deploy it to a free host. A [Render](https://render.com) blueprint
+is included (`render.yaml`):
+
+1. Push this repo to GitHub (already done if you're reading it there).
+2. In Render: **New → Blueprint**, connect this repository.
+3. Render reads `render.yaml`, installs dependencies and starts the app with
+   `gunicorn`. After a minute you get a public `https://…onrender.com` URL.
+4. Open that URL on your phone and enter a ticker.
+
+The app reads the `PORT` env var, so it also works on any host that uses a
+`Procfile` (Railway, Heroku-style platforms, etc.). Cloud hosts can reach Yahoo
+Finance, so you'll get **real live data** there (during market hours).
+
+> Note: Render's free tier sleeps after inactivity, so the first request after a
+> while may take ~30s to wake the service.
+
 ## API
 
 The frontend is powered by a small JSON API you can also call directly:
