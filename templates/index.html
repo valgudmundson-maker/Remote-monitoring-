@@ -93,6 +93,15 @@
     .error { color: var(--bear); }
     .spinner { text-align: center; color: var(--muted); padding: 30px; }
     footer { text-align: center; color: var(--muted); font-size: 0.75rem; padding: 20px; }
+    .demo-banner {
+      background: rgba(210,153,34,.15); color: var(--neutral);
+      border: 1px solid rgba(210,153,34,.4); border-radius: 8px;
+      padding: 10px 14px; margin-bottom: 16px; font-size: 0.85rem; text-align: center;
+    }
+    button.secondary {
+      background: transparent; color: var(--accent);
+      border: 1px solid var(--border);
+    }
   </style>
 </head>
 <body>
@@ -102,9 +111,15 @@
   </header>
 
   <div class="container">
+    {% if demo %}
+    <div class="demo-banner">
+      🧪 <strong>Demo mode</strong> — showing synthetic sample data, not real market prices.
+    </div>
+    {% endif %}
     <form id="form">
       <input id="tickers" type="text" placeholder="e.g. AAPL, MSFT, TSLA" autocomplete="off" autofocus />
       <button type="submit" id="go">Analyze</button>
+      <button type="button" id="sample" class="secondary">Load sample</button>
     </form>
     <div class="hint">Separate multiple tickers with spaces or commas (up to 10). Data is for the current trading session.</div>
 
@@ -120,7 +135,14 @@
     const input = document.getElementById('tickers');
     const results = document.getElementById('results');
     const goBtn = document.getElementById('go');
+    const sampleBtn = document.getElementById('sample');
     const charts = {};
+
+    const SAMPLE_TICKERS = 'AAPL, MSFT, TSLA, NVDA';
+    sampleBtn.addEventListener('click', () => {
+      input.value = SAMPLE_TICKERS;
+      form.requestSubmit();
+    });
 
     function fmt(v, prefix = '', suffix = '') {
       if (v === null || v === undefined) return '—';

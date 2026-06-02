@@ -185,7 +185,7 @@ def analyze(ticker: str) -> dict:
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", demo=DEMO)
 
 
 @app.route("/api/analyze")
