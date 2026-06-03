@@ -1,0 +1,13 @@
+# Render Blueprint — deploys the app as a free web service.
+# In the Render dashboard: New > Blueprint, connect this repo, and deploy.
+services:
+  - type: web
+    name: stock-technical-analysis
+    runtime: python
+    plan: free
+    branch: claude/stock-ticker-analysis-app-JVuFd
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
