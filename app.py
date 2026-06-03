@@ -7,7 +7,10 @@ ATR and a set of derived bullish/bearish signals.
 
 import datetime as dt
 import io
+import json
 import os
+import time
+import urllib.parse
 import urllib.request
 import zlib
 
@@ -16,6 +19,7 @@ import pandas as pd
 from flask import Flask, jsonify, render_template, request
 
 import indicators as ta
+import summary
 
 app = Flask(__name__)
 
@@ -29,6 +33,37 @@ DAILY_PERIOD = "1y"
 # so the UI is fully usable offline / outside market hours. Toggle with the
 # DEMO=1 env var or the --demo command-line flag.
 DEMO = os.environ.get("DEMO", "").lower() in ("1", "true", "yes")
+
+# Optional Alpha Vantage API key. When set, it provides cloud-friendly intraday
+# data and company fundamentals (Yahoo throttles datacenter IPs, so this is how
+# deployed instances get real same-day intraday + fundamentals).
+AV_KEY = os.environ.get("ALPHAVANTAGE_API_KEY", "").strip()
+
+# Cache TTLs (seconds) to limit external API calls (Alpha Vantage free tier is
+# rate-limited) and speed up repeat lookups.
+AV_INTRADAY_TTL = 60
+AV_OVERVIEW_TTL = 6 * 60 * 60
+STOOQ_TTL = 60 * 60
+_CACHE = {}
+
+
+def _cached(key, ttl, producer):
+    """Memoise producer() under key for ttl seconds (only caches truthy values)."""
+    now = time.time()
+    hit = _CACHE.get(key)
+    if hit is not None and now - hit[0] < ttl:
+        return hit[1]
+    value = producer()
+    if value is not None:
+        _CACHE[key] = (now, value)
+    return value
+
+
+def _get_json(url):
+    """GET a URL and parse JSON (browser-like UA), or None on failure."""
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        return json.loads(resp.read().decode("utf-8", "replace"))
 
 
 def _demo_rng(ticker: str, salt: int = 0):
@@ -126,6 +161,108 @@ def _fetch_stooq_daily(ticker: str):
     return None
 
 
+def _fetch_av_intraday(ticker: str):
+    """Same-day 5-minute intraday OHLCV from Alpha Vantage (needs AV_KEY).
+
+    Alpha Vantage works from cloud/datacenter IPs (unlike Yahoo), so it is the
+    preferred intraday source on deployed hosts. Returns the most recent
+    session's bars as an OHLCV DataFrame, or None.
+    """
+    if not AV_KEY:
+        return None
+    params = urllib.parse.urlencode({
+        "function": "TIME_SERIES_INTRADAY", "symbol": ticker, "interval": "5min",
+        "outputsize": "compact", "apikey": AV_KEY,
+    })
+    data = _get_json("https://www.alphavantage.co/query?" + params)
+    series = (data or {}).get("Time Series (5min)")
+    if not series:
+        return None
+    rows = []
+    for ts, o in series.items():
+        rows.append((
+            pd.Timestamp(ts), float(o["1. open"]), float(o["2. high"]),
+            float(o["3. low"]), float(o["4. close"]), float(o["5. volume"]),
+        ))
+    df = pd.DataFrame(rows, columns=["dt", "Open", "High", "Low", "Close", "Volume"])
+    df = df.set_index("dt").sort_index()
+    # Keep only the most recent trading day for a true "same-day" view.
+    last_day = df.index[-1].normalize()
+    return df[df.index.normalize() == last_day]
+
+
+def _fetch_av_overview(ticker: str):
+    """Company fundamentals from Alpha Vantage's OVERVIEW endpoint (needs AV_KEY)."""
+    if not AV_KEY:
+        return None
+    params = urllib.parse.urlencode({
+        "function": "OVERVIEW", "symbol": ticker, "apikey": AV_KEY,
+    })
+    data = _get_json("https://www.alphavantage.co/query?" + params)
+    if not data or not data.get("Symbol"):
+        return None
+
+    def num(key):
+        try:
+            return float(data.get(key))
+        except (TypeError, ValueError):
+            return None
+
+    return {
+        "name": data.get("Name"),
+        "sector": data.get("Sector"),
+        "market_cap": num("MarketCapitalization"),
+        "pe": num("PERatio"),
+        "peg": num("PEGRatio"),
+        "profit_margin": num("ProfitMargin"),
+        "rev_growth": num("QuarterlyRevenueGrowthYOY"),
+        "dividend_yield": num("DividendYield"),
+        "target": num("AnalystTargetPrice"),
+        "beta": num("Beta"),
+        "eps": num("EPS"),
+    }
+
+
+def _fetch_yf_fundamentals(tk):
+    """Best-effort fundamentals from yfinance (works where Yahoo is reachable)."""
+    if tk is None:
+        return None
+    info = tk.info or {}
+    if not info:
+        return None
+    return {
+        "name": info.get("longName") or info.get("shortName"),
+        "sector": info.get("sector"),
+        "market_cap": info.get("marketCap"),
+        "pe": info.get("trailingPE"),
+        "peg": info.get("trailingPegRatio") or info.get("pegRatio"),
+        "profit_margin": info.get("profitMargins"),
+        "rev_growth": info.get("revenueGrowth"),
+        "dividend_yield": info.get("dividendYield"),
+        "target": info.get("targetMeanPrice"),
+        "beta": info.get("beta"),
+        "eps": info.get("trailingEps"),
+    }
+
+
+def _demo_fundamentals(ticker: str):
+    """Deterministic synthetic fundamentals for demo mode."""
+    rng = _demo_rng(ticker, salt=3)
+    return {
+        "name": f"{ticker} (demo)",
+        "sector": "Technology",
+        "market_cap": float(rng.integers(5, 2500)) * 1e9,
+        "pe": round(float(rng.uniform(8, 45)), 1),
+        "peg": round(float(rng.uniform(0.5, 3.0)), 2),
+        "profit_margin": round(float(rng.uniform(-0.05, 0.30)), 3),
+        "rev_growth": round(float(rng.uniform(-0.1, 0.35)), 3),
+        "dividend_yield": round(float(rng.uniform(0, 0.03)), 4),
+        "target": None,
+        "beta": round(float(rng.uniform(0.6, 1.8)), 2),
+        "eps": round(float(rng.uniform(-1, 12)), 2),
+    }
+
+
 def _safe(fn, *args):
     """Call a fetch function, returning None on any failure."""
     try:
@@ -135,12 +272,13 @@ def _safe(fn, *args):
 
 
 
-def _build_result(ticker, df, mode, daily_df, source="Yahoo Finance"):
+def _build_result(ticker, df, mode, daily_df, source="Yahoo Finance", fundamentals=None):
     """Compute the full analysis from an OHLCV frame.
 
     ``mode`` is "intraday" (5-min, same-day) or "daily" (fallback when the
     market is closed). ``daily_df`` provides the 50/200-day moving averages.
-    ``source`` names the data provider used.
+    ``source`` names the data provider used; ``fundamentals`` is an optional
+    dict used for the fundamentals "so what" summary.
     """
     close = df["Close"]
     intraday = mode == "intraday"
@@ -200,6 +338,14 @@ def _build_result(ticker, df, mode, daily_df, source="Yahoo Finance"):
     }
 
     signals = ta.build_signals(latest)
+    overall = ta.overall_sentiment(signals)
+
+    # Plain-English "so what" statements for a medium/long-term entry decision.
+    fundamental_input = dict(fundamentals or {}, price=price)
+    so_what = {
+        "technical": summary.technical_summary(latest, overall),
+        "fundamental": summary.fundamental_summary(fundamental_input) if fundamentals else None,
+    }
 
     # Chart series. Intraday shows the whole session; daily shows the last ~60
     # trading days for a readable trend.
@@ -228,7 +374,8 @@ def _build_result(ticker, df, mode, daily_df, source="Yahoo Finance"):
         "source": source,
         "metrics": latest,
         "signals": signals,
-        "overall": ta.overall_sentiment(signals),
+        "overall": overall,
+        "so_what": so_what,
         "chart": chart,
         "note": note,
         "error": None,
@@ -250,21 +397,42 @@ def analyze(ticker: str) -> dict:
     except Exception as exc:  # yfinance import / construction failure
         return {"ticker": ticker, "error": f"Failed to initialise data source: {exc}"}
 
-    intraday = _safe(_fetch_intraday, tk, ticker)
-    daily = _safe(_fetch_daily, tk, ticker)
-    daily_source = "Yahoo Finance"
+    # --- Intraday: prefer Alpha Vantage (cloud-friendly), else Yahoo. ---
+    intraday = intraday_source = None
+    if not DEMO and AV_KEY:
+        av = _safe(lambda: _cached(("av_intra", ticker), AV_INTRADAY_TTL,
+                                   lambda: _fetch_av_intraday(ticker)))
+        if av is not None and not av.empty:
+            intraday, intraday_source = av, "Alpha Vantage"
+    if intraday is None:
+        yi = _safe(_fetch_intraday, tk, ticker)
+        if yi is not None and not yi.empty:
+            intraday, intraday_source = yi, ("Demo" if DEMO else "Yahoo Finance")
 
-    # Yahoo often throttles cloud/datacenter IPs, so fall back to Stooq (which
-    # does not) for the daily series when Yahoo returns nothing.
+    # --- Daily: Yahoo, falling back to Stooq on cloud hosts. ---
+    daily = _safe(_fetch_daily, tk, ticker)
+    daily_source = "Demo" if DEMO else "Yahoo Finance"
     if (daily is None or daily.empty) and not DEMO:
-        stooq = _safe(_fetch_stooq_daily, ticker)
+        stooq = _safe(lambda: _cached(("stooq", ticker), STOOQ_TTL,
+                                      lambda: _fetch_stooq_daily(ticker)))
         if stooq is not None and not stooq.empty:
             daily, daily_source = stooq, "Stooq"
 
+    # --- Fundamentals (best-effort): Alpha Vantage, then Yahoo. ---
+    if DEMO:
+        fundamentals = _demo_fundamentals(ticker)
+    else:
+        fundamentals = None
+        if AV_KEY:
+            fundamentals = _safe(lambda: _cached(("av_ov", ticker), AV_OVERVIEW_TTL,
+                                                 lambda: _fetch_av_overview(ticker)))
+        if fundamentals is None:
+            fundamentals = _safe(_fetch_yf_fundamentals, tk)
+
     if intraday is not None and not intraday.empty:
-        return _build_result(ticker, intraday, "intraday", daily, "Yahoo Finance")
+        return _build_result(ticker, intraday, "intraday", daily, intraday_source, fundamentals)
     if daily is not None and not daily.empty:
-        return _build_result(ticker, daily, "daily", daily, daily_source)
+        return _build_result(ticker, daily, "daily", daily, daily_source, fundamentals)
 
     return {
         "ticker": ticker,

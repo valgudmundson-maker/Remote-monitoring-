@@ -233,6 +233,54 @@ def test_stooq_fallback_when_yahoo_empty(monkeypatch):
     assert res["metrics"]["sma200"] is not None
 
 
+def test_technical_summary_entry_framing():
+    import summary
+
+    # Uptrend + overbought -> caution about entry timing.
+    up_hot = summary.technical_summary(
+        {"price": 110, "sma50": 105, "sma200": 100, "rsi": 75}, "bullish")
+    assert "uptrend" in up_hot and ("pullback" in up_hot or "scaling in" in up_hot)
+
+    # Downtrend -> wait for stabilization.
+    down = summary.technical_summary(
+        {"price": 90, "sma50": 95, "sma200": 100, "rsi": 50}, "bearish")
+    assert "downtrend" in down and "200-day" in down
+
+
+def test_fundamental_summary_and_none():
+    import summary
+
+    assert summary.fundamental_summary(None) is None
+    text = summary.fundamental_summary({
+        "name": "Acme", "pe": 12, "rev_growth": 0.20, "profit_margin": 0.18,
+        "price": 100, "target": 120,
+    })
+    assert "Acme" in text and "growth" in text and "+20%" in text
+
+
+def test_demo_includes_so_what(monkeypatch):
+    import app
+    monkeypatch.setattr(app, "DEMO", True)
+    res = app.analyze("AAPL")
+    assert res["so_what"]["technical"]
+    assert res["so_what"]["fundamental"]  # demo provides synthetic fundamentals
+
+
+def test_av_overview_parsing(monkeypatch):
+    import app
+
+    payload = {
+        "Symbol": "AAPL", "Name": "Apple Inc", "Sector": "Technology",
+        "MarketCapitalization": "3000000000000", "PERatio": "30.5",
+        "PEGRatio": "2.1", "ProfitMargin": "0.25", "QuarterlyRevenueGrowthYOY": "0.08",
+        "DividendYield": "0.005", "AnalystTargetPrice": "210", "Beta": "1.2", "EPS": "6.1",
+    }
+    monkeypatch.setattr(app, "AV_KEY", "demo-key")
+    monkeypatch.setattr(app, "_get_json", lambda url: payload)
+    f = app._fetch_av_overview("AAPL")
+    assert f["name"] == "Apple Inc" and f["pe"] == 30.5 and f["profit_margin"] == 0.25
+
+
 def test_api_endpoint():
     _install_fake_yfinance()
     import app

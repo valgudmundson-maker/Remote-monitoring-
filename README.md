@@ -87,6 +87,35 @@ The app reads the `PORT` env var, so it also works on any host that uses a
 > analysis (including the 50/200-day MAs); same-day intraday works when Yahoo is
 > reachable (e.g. running locally). The data source used is shown on each card.
 
+### Real same-day intraday + fundamentals on a deployed host (optional)
+
+To get genuine **same-day intraday data and a fundamentals summary** on a cloud
+host (where Yahoo is blocked), add a free
+[Alpha Vantage](https://www.alphavantage.co/support/#api-key) API key:
+
+- **On Render:** the `render.yaml` already declares an `ALPHAVANTAGE_API_KEY`
+  variable. Set its value in **Render → your service → Environment**, then
+  redeploy. When present, the app uses Alpha Vantage for 5-minute intraday data
+  and company fundamentals (P/E, growth, margins, analyst target, etc.).
+- **Locally:** `ALPHAVANTAGE_API_KEY=yourkey python app.py`
+
+> Alpha Vantage's free tier is rate-limited (a small number of calls/day), so
+> results are cached and a handful of tickers at a time works best. Without a
+> key the app still works using Yahoo/Stooq (daily analysis + technical "so
+> what"); only the fundamentals summary needs the key on cloud hosts.
+
+## "So what?" summaries
+
+Each result card includes a plain-English **"So what?"** box framed for finding a
+reasonable entry point for a **medium-to-long-term position**:
+
+- **Technical** — trend (price vs the 50/200-day averages, golden/death cross)
+  and momentum (RSI) translated into entry-timing guidance.
+- **Fundamentals** — valuation, growth, profitability and analyst upside
+  translated into a long-term-holder verdict (requires fundamentals data).
+
+These are informational only — not financial advice.
+
 > Note: Render's free tier sleeps after inactivity, so the first request after a
 > while may take ~30s to wake the service.
 >

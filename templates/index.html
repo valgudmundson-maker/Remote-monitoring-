@@ -95,6 +95,18 @@
       border: 1px solid rgba(88,166,255,.35); border-radius: 8px;
       padding: 8px 12px; margin-bottom: 12px; font-size: 0.82rem;
     }
+    .sowhat {
+      background: var(--bg); border: 1px solid var(--border);
+      border-left: 3px solid var(--accent); border-radius: 8px;
+      padding: 12px 14px; margin: 14px 0;
+    }
+    .sw-title { font-weight: 700; margin-bottom: 8px; }
+    .sw-sub { color: var(--muted); font-weight: 400; font-size: 0.8rem; }
+    .sw-item { font-size: 0.88rem; margin-bottom: 6px; line-height: 1.5; }
+    .sw-label { font-weight: 700; color: var(--accent); }
+    .sw-hint { color: var(--muted); }
+    .sw-hint code, .sw-disclaim code { background: var(--panel); padding: 1px 5px; border-radius: 4px; }
+    .sw-disclaim { color: var(--muted); font-size: 0.72rem; margin-top: 6px; }
     .error { color: var(--bear); }
     .spinner { text-align: center; color: var(--muted); padding: 30px; }
     footer { text-align: center; color: var(--muted); font-size: 0.75rem; padding: 20px; }
@@ -215,6 +227,15 @@
           </div>
 
           <div class="signals">${signals}</div>
+
+          <div class="sowhat">
+            <div class="sw-title">📌 So what? <span class="sw-sub">(for a medium/long-term entry)</span></div>
+            <div class="sw-item"><span class="sw-label">Technical:</span> ${r.so_what.technical}</div>
+            ${r.so_what.fundamental
+              ? `<div class="sw-item"><span class="sw-label">Fundamentals:</span> ${r.so_what.fundamental}</div>`
+              : `<div class="sw-item sw-hint">Fundamentals summary unavailable — set an <code>ALPHAVANTAGE_API_KEY</code> to enable it.</div>`}
+            <div class="sw-disclaim">Informational only — not financial advice. Do your own research.</div>
+          </div>
 
           <div class="chart-wrap"><canvas id="${chartId}"></canvas></div>
           <div class="chart-label">${daily ? 'Price (daily)' : 'Price &amp; VWAP (intraday)'}</div>

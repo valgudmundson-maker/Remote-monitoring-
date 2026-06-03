@@ -11,3 +11,9 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
+      # Optional: enables real same-day intraday data + fundamentals on cloud
+      # hosts (Yahoo throttles datacenter IPs). Get a free key at
+      # https://www.alphavantage.co/support/#api-key and set it in the Render
+      # dashboard. Leave unset to use the Stooq daily fallback.
+      - key: ALPHAVANTAGE_API_KEY
+        sync: false
