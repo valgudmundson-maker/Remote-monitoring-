@@ -90,6 +90,11 @@
     .chart-wrap { margin-top: 16px; height: 240px; }
     .chart-wrap.osc { height: 180px; }
     .chart-label { text-align: center; color: var(--muted); font-size: 0.72rem; margin-top: 4px; }
+    .note {
+      background: rgba(88,166,255,.12); color: var(--accent);
+      border: 1px solid rgba(88,166,255,.35); border-radius: 8px;
+      padding: 8px 12px; margin-bottom: 12px; font-size: 0.82rem;
+    }
     .error { color: var(--bear); }
     .spinner { text-align: center; color: var(--muted); padding: 30px; }
     footer { text-align: center; color: var(--muted); font-size: 0.75rem; padding: 20px; }
@@ -169,6 +174,9 @@
          </div>`).join('');
 
       const chartId = `chart-${r.ticker}`;
+      const daily = r.mode === 'daily';
+      const span = daily ? 'daily' : 'intraday';
+      const noteHtml = r.note ? `<div class="note">${r.note}</div>` : '';
 
       return `
         <div class="card">
@@ -184,8 +192,10 @@
             </div>
           </div>
 
+          ${noteHtml}
+
           <div class="grid">
-            ${metric('Open', fmt(m.session_open, '$'))}
+            ${metric(daily ? 'Prev Close' : 'Open', fmt(m.session_open, '$'))}
             ${metric('Day High', fmt(m.day_high, '$'))}
             ${metric('Day Low', fmt(m.day_low, '$'))}
             ${metric('Volume', fmt(m.volume))}
@@ -207,9 +217,9 @@
           <div class="signals">${signals}</div>
 
           <div class="chart-wrap"><canvas id="${chartId}"></canvas></div>
-          <div class="chart-label">Price &amp; VWAP (intraday)</div>
+          <div class="chart-label">${daily ? 'Price (daily)' : 'Price &amp; VWAP (intraday)'}</div>
           <div class="chart-wrap osc"><canvas id="${chartId}-osc"></canvas></div>
-          <div class="chart-label">LuxAlgo Ultimate RSI oscillator (intraday)</div>
+          <div class="chart-label">LuxAlgo Ultimate RSI oscillator (${span})</div>
         </div>`;
     }
 

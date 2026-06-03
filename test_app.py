@@ -122,6 +122,67 @@ def test_demo_mode_offline(monkeypatch):
     assert app.analyze("TSLA")["metrics"]["price"] != m["price"]
 
 
+def _install_yf(intraday_df, daily_df):
+    """Install a fake yfinance returning the given intraday/daily frames."""
+    class FakeTicker:
+        def __init__(self, ticker):
+            self.ticker = ticker
+
+        def history(self, period, interval):
+            return daily_df if interval == "1d" else intraday_df
+
+    fake = types.ModuleType("yfinance")
+    fake.Ticker = FakeTicker
+    sys.modules["yfinance"] = fake
+
+
+def test_daily_fallback_when_intraday_empty(monkeypatch):
+    """When intraday data is empty (market closed), fall back to daily."""
+    empty = pd.DataFrame()
+    daily = _make_df(260, "1D", "2025-06-01", seed=4)
+    _install_yf(empty, daily)
+
+    import app
+    monkeypatch.setattr(app, "DEMO", False)
+
+    res = app.analyze("AAPL")
+    assert res["error"] is None
+    assert res["mode"] == "daily"
+    assert res["note"]  # explanatory banner present
+    assert res["interval"] == "1d"
+    m = res["metrics"]
+    assert m["vwap"] is None  # VWAP is intraday-only
+    assert m["sma50"] is not None and m["sma200"] is not None
+    assert len(res["chart"]["times"]) <= 60
+
+
+def test_error_when_no_data(monkeypatch):
+    """Both intraday and daily empty -> a clear error, no crash."""
+    empty = pd.DataFrame()
+    _install_yf(empty, empty)
+
+    import app
+    monkeypatch.setattr(app, "DEMO", False)
+
+    res = app.analyze("BADTICKER")
+    assert res.get("error")
+    assert "mode" not in res or res.get("metrics") is None
+
+
+def test_intraday_preferred_when_available(monkeypatch):
+    """Intraday data, when present, is used over the daily fallback."""
+    intraday = _make_df(78, "5min", "2026-06-01 09:30", seed=5)
+    daily = _make_df(260, "1D", "2025-06-01", seed=6)
+    _install_yf(intraday, daily)
+
+    import app
+    monkeypatch.setattr(app, "DEMO", False)
+
+    res = app.analyze("AAPL")
+    assert res["mode"] == "intraday"
+    assert res["metrics"]["vwap"] is not None
+
+
 def test_api_endpoint():
     _install_fake_yfinance()
     import app

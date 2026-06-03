@@ -59,88 +59,88 @@ def _demo_ohlcv(ticker: str, n: int, freq: str, end: pd.Timestamp, vol: float, s
     )
 
 
-def _fetch_history(ticker: str):
-    """Fetch same-day intraday OHLCV data for a ticker.
+def _make_ticker(ticker: str):
+    """Create a yfinance Ticker (or None in demo mode)."""
+    if DEMO:
+        return None
+    import yfinance as yf
 
-    In demo mode returns synthetic data; otherwise pulls from Yahoo Finance via
-    yfinance (imported lazily so the module loads even if it is unavailable).
+    return yf.Ticker(ticker)
+
+
+def _fetch_intraday(tk, ticker: str):
+    """Fetch same-day intraday (5-minute) OHLCV data.
+
+    In demo mode returns synthetic data; otherwise pulls from Yahoo Finance.
     """
     if DEMO:
         # Anchor the synthetic session to a realistic market close (16:00 ET).
         close_time = pd.Timestamp.now(tz="America/New_York").normalize() + pd.Timedelta(hours=15, minutes=55)
-        return None, _demo_ohlcv(ticker, 78, "5min", close_time, vol=0.4, salt=1)
-
-    import yfinance as yf
-
-    tk = yf.Ticker(ticker)
-    df = tk.history(period=PERIOD, interval=INTERVAL)
-    return tk, df
+        return _demo_ohlcv(ticker, 78, "5min", close_time, vol=0.4, salt=1)
+    return tk.history(period=PERIOD, interval=INTERVAL)
 
 
 def _fetch_daily(tk, ticker: str):
-    """Fetch ~1 year of daily OHLCV data (for the 50/200-day MAs)."""
+    """Fetch ~1 year of daily OHLCV data (for daily analysis + 50/200-day MAs)."""
     if DEMO:
         today = pd.Timestamp.now(tz="America/New_York").normalize()
         return _demo_ohlcv(ticker, 260, "1D", today, vol=1.2, salt=2)
     return tk.history(period=DAILY_PERIOD, interval="1d")
 
 
-def analyze(ticker: str) -> dict:
-    """Run the full technical analysis for a single ticker."""
-    ticker = ticker.strip().upper()
-    if not ticker:
-        return {"ticker": ticker, "error": "Empty ticker symbol."}
-
+def _safe(fn, *args):
+    """Call a fetch function, returning None on any failure."""
     try:
-        tk, df = _fetch_history(ticker)
-    except Exception as exc:  # network / library failure
-        return {"ticker": ticker, "error": f"Failed to fetch data: {exc}"}
+        return fn(*args)
+    except Exception:
+        return None
 
-    if df is None or df.empty:
-        return {
-            "ticker": ticker,
-            "error": "No intraday data available (market may be closed, "
-            "or the symbol is invalid).",
-        }
 
+
+def _build_result(ticker, df, mode, daily_df):
+    """Compute the full analysis from an OHLCV frame.
+
+    ``mode`` is "intraday" (5-min, same-day) or "daily" (fallback when the
+    market is closed). ``daily_df`` provides the 50/200-day moving averages.
+    """
     close = df["Close"]
+    intraday = mode == "intraday"
+    last = -1
 
-    # Indicator series.
     sma20 = ta.sma(close, 20)
     ema20 = ta.ema(close, 20)
     rsi14 = ta.rsi(close, 14)
     macd_line, macd_signal, macd_hist = ta.macd(close)
     bb_mid, bb_upper, bb_lower = ta.bollinger_bands(close, 20)
-    vwap_series = ta.vwap(df)
     atr14 = ta.atr(df, 14)
     lux_osc, lux_signal = ta.ultimate_rsi(close, 14, 14)
 
-    # 50- and 200-day simple moving averages require daily data over a longer
-    # window than the intraday session, so fetch it separately.
-    sma50 = sma200 = None
-    try:
-        daily = _fetch_daily(tk, ticker)
-        if daily is not None and not daily.empty:
-            dclose = daily["Close"]
-            if len(dclose) >= 50:
-                sma50 = ta.sma(dclose, 50).iloc[-1]
-            if len(dclose) >= 200:
-                sma200 = ta.sma(dclose, 200).iloc[-1]
-    except Exception:
-        pass  # daily MAs are best-effort; intraday analysis still works.
+    # VWAP is a same-session concept, so only meaningful for intraday data.
+    vwap_series = ta.vwap(df) if intraday else None
 
-    last = -1
+    # 50/200-day MAs always come from the daily history.
+    sma50 = sma200 = None
+    if daily_df is not None and not daily_df.empty:
+        dclose = daily_df["Close"]
+        if len(dclose) >= 50:
+            sma50 = ta.sma(dclose, 50).iloc[last]
+        if len(dclose) >= 200:
+            sma200 = ta.sma(dclose, 200).iloc[last]
+
     price = float(close.iloc[last])
-    session_open = float(df["Open"].iloc[0])
-    change = price - session_open
-    change_pct = (change / session_open * 100) if session_open else 0.0
+    if intraday:
+        baseline = float(df["Open"].iloc[0])  # change vs session open
+    else:
+        baseline = float(close.iloc[-2]) if len(close) > 1 else price  # vs prev close
+    change = price - baseline
+    change_pct = (change / baseline * 100) if baseline else 0.0
 
     latest = {
         "price": ta._round(price),
-        "session_open": ta._round(session_open),
-        "day_high": ta._round(df["High"].max()),
-        "day_low": ta._round(df["Low"].min()),
-        "volume": int(df["Volume"].sum()),
+        "session_open": ta._round(baseline),
+        "day_high": ta._round(df["High"].iloc[last] if not intraday else df["High"].max()),
+        "day_low": ta._round(df["Low"].iloc[last] if not intraday else df["Low"].min()),
+        "volume": int(df["Volume"].iloc[last] if not intraday else df["Volume"].sum()),
         "change": ta._round(change),
         "change_pct": ta._round(change_pct),
         "sma20": ta._round(sma20.iloc[last]),
@@ -152,7 +152,7 @@ def analyze(ticker: str) -> dict:
         "bb_upper": ta._round(bb_upper.iloc[last]),
         "bb_middle": ta._round(bb_mid.iloc[last]),
         "bb_lower": ta._round(bb_lower.iloc[last]),
-        "vwap": ta._round(vwap_series.iloc[last]),
+        "vwap": ta._round(vwap_series.iloc[last]) if intraday else None,
         "atr": ta._round(atr14.iloc[last]),
         "lux_osc": ta._round(lux_osc.iloc[last]),
         "lux_signal": ta._round(lux_signal.iloc[last]),
@@ -162,24 +162,66 @@ def analyze(ticker: str) -> dict:
 
     signals = ta.build_signals(latest)
 
-    # Build a compact price + VWAP series for charting on the frontend.
+    # Chart series. Intraday shows the whole session; daily shows the last ~60
+    # trading days for a readable trend.
+    view = df if intraday else df.iloc[-60:]
+    vclose = view["Close"]
+    vlux = lux_osc.iloc[-len(view):]
+    vsig = lux_signal.iloc[-len(view):]
+    time_fmt = "%H:%M" if intraday else "%m-%d"
     chart = {
-        "times": [t.strftime("%H:%M") for t in df.index],
-        "close": [ta._round(v) for v in close.tolist()],
-        "vwap": [ta._round(v) for v in vwap_series.tolist()],
-        "lux_osc": [ta._round(v) for v in lux_osc.tolist()],
-        "lux_signal": [ta._round(v) for v in lux_signal.tolist()],
+        "times": [t.strftime(time_fmt) for t in view.index],
+        "close": [ta._round(v) for v in vclose.tolist()],
+        "vwap": [ta._round(v) for v in vwap_series.tolist()] if intraday else [None] * len(view),
+        "lux_osc": [ta._round(v) for v in vlux.tolist()],
+        "lux_signal": [ta._round(v) for v in vsig.tolist()],
     }
+
+    note = None if intraday else (
+        "Market closed / no intraday data — showing latest daily analysis."
+    )
 
     return {
         "ticker": ticker,
-        "interval": INTERVAL,
-        "as_of": df.index[-1].strftime("%Y-%m-%d %H:%M %Z").strip(),
+        "mode": mode,
+        "interval": INTERVAL if intraday else "1d",
+        "as_of": view.index[-1].strftime("%Y-%m-%d %H:%M %Z").strip(),
         "metrics": latest,
         "signals": signals,
         "overall": ta.overall_sentiment(signals),
         "chart": chart,
+        "note": note,
         "error": None,
+    }
+
+
+def analyze(ticker: str) -> dict:
+    """Run the full technical analysis for a single ticker.
+
+    Uses same-day intraday data when available, and falls back to daily
+    analysis (still including the 50/200-day MAs) when the market is closed.
+    """
+    ticker = ticker.strip().upper()
+    if not ticker:
+        return {"ticker": ticker, "error": "Empty ticker symbol."}
+
+    try:
+        tk = _make_ticker(ticker)
+    except Exception as exc:  # yfinance import / construction failure
+        return {"ticker": ticker, "error": f"Failed to initialise data source: {exc}"}
+
+    intraday = _safe(_fetch_intraday, tk, ticker)
+    daily = _safe(_fetch_daily, tk, ticker)
+
+    if intraday is not None and not intraday.empty:
+        return _build_result(ticker, intraday, "intraday", daily)
+    if daily is not None and not daily.empty:
+        return _build_result(ticker, daily, "daily", daily)
+
+    return {
+        "ticker": ticker,
+        "error": "No data available — the symbol may be invalid, or the data "
+        "provider is temporarily unavailable. Please try again.",
     }
 
 
