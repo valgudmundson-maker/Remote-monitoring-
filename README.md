@@ -4,6 +4,8 @@ A simple web app to enter stock tickers and get **intraday (same-day) technical
 analysis** — price action, moving averages, momentum and volatility indicators,
 plus derived bullish/bearish signals and a live price/VWAP chart.
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/valgudmundson-maker/Remote-monitoring-/tree/claude/stock-ticker-analysis-app-JVuFd)
+
 ## Features
 
 - Enter one or many tickers (e.g. `AAPL, MSFT, TSLA`) — up to 10 at once.
@@ -63,8 +65,11 @@ unreachable. It is clearly synthetic and not real market data.
 ## Deploy (access it from your phone / anywhere)
 
 Running locally only works on your own machine. To open the app from a phone or
-share a link, deploy it to a free host. A [Render](https://render.com) blueprint
-is included (`render.yaml`):
+share a link, deploy it to a free host. The fastest way is the **Deploy to
+Render** button above — it reads the included `render.yaml`, provisions a free
+web service and gives you a public `https://…onrender.com` URL.
+
+Or set it up manually:
 
 1. Push this repo to GitHub (already done if you're reading it there).
 2. In Render: **New → Blueprint**, connect this repository.
@@ -78,6 +83,10 @@ Finance, so you'll get **real live data** there (during market hours).
 
 > Note: Render's free tier sleeps after inactivity, so the first request after a
 > while may take ~30s to wake the service.
+>
+> `render.yaml` is currently pinned to the feature branch so it deploys before
+> merge. After merging to `main`, change `branch:` in `render.yaml` (and the
+> button URL in this README) to `main`.
 
 ## API
 
