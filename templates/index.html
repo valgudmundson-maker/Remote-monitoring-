@@ -132,7 +132,7 @@
   </div>
 
   <footer>
-    For educational/informational use only — not financial advice. Data via Yahoo Finance.
+    For educational/informational use only — not financial advice. Data via Yahoo Finance, with Stooq as a fallback.
   </footer>
 
   <script>
@@ -188,7 +188,7 @@
                   ${changeSign}${fmt(m.change)} (${changeSign}${fmt(m.change_pct, '', '%')})
                 </span>
               </div>
-              <div class="as-of">As of ${r.as_of} · ${r.interval} bars</div>
+              <div class="as-of">As of ${r.as_of} · ${r.interval} bars · ${r.source || 'Yahoo Finance'}</div>
             </div>
           </div>
 

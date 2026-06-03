@@ -183,6 +183,56 @@ def test_intraday_preferred_when_available(monkeypatch):
     assert res["metrics"]["vwap"] is not None
 
 
+def _fake_stooq_csv(n=300):
+    """Build a Stooq-style daily CSV string."""
+    dates = pd.date_range("2025-01-01", periods=n, freq="D")
+    rows = ["Date,Open,High,Low,Close,Volume"]
+    price = 100.0
+    for d in dates:
+        price += 0.1
+        rows.append(f"{d.date()},{price:.2f},{price+1:.2f},{price-1:.2f},{price:.2f},10000")
+    return "\n".join(rows) + "\n"
+
+
+def test_stooq_parsing(monkeypatch):
+    """_fetch_stooq_daily parses a CSV response into a clean OHLCV frame."""
+    import contextlib
+    import app
+
+    csv = _fake_stooq_csv(250)
+
+    class FakeResp:
+        def read(self):
+            return csv.encode()
+
+    @contextlib.contextmanager
+    def fake_urlopen(req, timeout=0):
+        yield FakeResp()
+
+    monkeypatch.setattr(app.urllib.request, "urlopen", fake_urlopen)
+    df = app._fetch_stooq_daily("AAPL")
+    assert df is not None and not df.empty
+    assert list(df.columns) == ["Open", "High", "Low", "Close", "Volume"]
+    assert isinstance(df.index, pd.DatetimeIndex)
+    assert len(df) == 250
+
+
+def test_stooq_fallback_when_yahoo_empty(monkeypatch):
+    """When Yahoo returns nothing, analyze() falls back to Stooq (daily)."""
+    _install_yf(pd.DataFrame(), pd.DataFrame())  # Yahoo intraday + daily empty
+
+    import app
+    monkeypatch.setattr(app, "DEMO", False)
+    monkeypatch.setattr(app, "_fetch_stooq_daily",
+                        lambda ticker: _make_df(260, "1D", "2025-06-01", seed=9))
+
+    res = app.analyze("AAPL")
+    assert res["error"] is None
+    assert res["mode"] == "daily"
+    assert res["source"] == "Stooq"
+    assert res["metrics"]["sma200"] is not None
+
+
 def test_api_endpoint():
     _install_fake_yfinance()
     import app

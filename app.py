@@ -6,7 +6,9 @@ ATR and a set of derived bullish/bearish signals.
 """
 
 import datetime as dt
+import io
 import os
+import urllib.request
 import zlib
 
 import numpy as np
@@ -88,6 +90,42 @@ def _fetch_daily(tk, ticker: str):
     return tk.history(period=DAILY_PERIOD, interval="1d")
 
 
+def _fetch_stooq_daily(ticker: str):
+    """Fetch daily OHLCV from Stooq (free, no API key, cloud-host friendly).
+
+    Used as a fallback when yfinance/Yahoo is unavailable (e.g. Yahoo throttles
+    datacenter IPs, so it often fails on cloud hosts). Returns a DataFrame with
+    a DatetimeIndex and Open/High/Low/Close/Volume columns, or None.
+    """
+    headers = {"User-Agent": "Mozilla/5.0"}
+    # US listings use a ".us" suffix on Stooq; try that first, then bare symbol.
+    for sym in (f"{ticker.lower()}.us", ticker.lower()):
+        url = f"https://stooq.com/q/d/l/?s={sym}&i=d"
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                text = resp.read().decode("utf-8", "replace")
+        except Exception:
+            continue
+        if not text or text.lstrip().startswith("<") or "No data" in text:
+            continue
+        try:
+            df = pd.read_csv(io.StringIO(text))
+        except Exception:
+            continue
+        if df.empty or "Close" not in df.columns or "Date" not in df.columns:
+            continue
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+        df = df.dropna(subset=["Date"]).set_index("Date").sort_index()
+        keep = [c for c in ("Open", "High", "Low", "Close", "Volume") if c in df.columns]
+        df = df[keep]
+        if "Volume" not in df.columns:
+            df["Volume"] = 0
+        if df["Close"].notna().sum() >= 1:
+            return df
+    return None
+
+
 def _safe(fn, *args):
     """Call a fetch function, returning None on any failure."""
     try:
@@ -97,11 +135,12 @@ def _safe(fn, *args):
 
 
 
-def _build_result(ticker, df, mode, daily_df):
+def _build_result(ticker, df, mode, daily_df, source="Yahoo Finance"):
     """Compute the full analysis from an OHLCV frame.
 
     ``mode`` is "intraday" (5-min, same-day) or "daily" (fallback when the
     market is closed). ``daily_df`` provides the 50/200-day moving averages.
+    ``source`` names the data provider used.
     """
     close = df["Close"]
     intraday = mode == "intraday"
@@ -178,7 +217,7 @@ def _build_result(ticker, df, mode, daily_df):
     }
 
     note = None if intraday else (
-        "Market closed / no intraday data — showing latest daily analysis."
+        "Showing latest daily analysis (no same-day intraday data available)."
     )
 
     return {
@@ -186,6 +225,7 @@ def _build_result(ticker, df, mode, daily_df):
         "mode": mode,
         "interval": INTERVAL if intraday else "1d",
         "as_of": view.index[-1].strftime("%Y-%m-%d %H:%M %Z").strip(),
+        "source": source,
         "metrics": latest,
         "signals": signals,
         "overall": ta.overall_sentiment(signals),
@@ -212,11 +252,19 @@ def analyze(ticker: str) -> dict:
 
     intraday = _safe(_fetch_intraday, tk, ticker)
     daily = _safe(_fetch_daily, tk, ticker)
+    daily_source = "Yahoo Finance"
+
+    # Yahoo often throttles cloud/datacenter IPs, so fall back to Stooq (which
+    # does not) for the daily series when Yahoo returns nothing.
+    if (daily is None or daily.empty) and not DEMO:
+        stooq = _safe(_fetch_stooq_daily, ticker)
+        if stooq is not None and not stooq.empty:
+            daily, daily_source = stooq, "Stooq"
 
     if intraday is not None and not intraday.empty:
-        return _build_result(ticker, intraday, "intraday", daily)
+        return _build_result(ticker, intraday, "intraday", daily, "Yahoo Finance")
     if daily is not None and not daily.empty:
-        return _build_result(ticker, daily, "daily", daily)
+        return _build_result(ticker, daily, "daily", daily, daily_source)
 
     return {
         "ticker": ticker,

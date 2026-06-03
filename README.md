@@ -78,8 +78,14 @@ Or set it up manually:
 4. Open that URL on your phone and enter a ticker.
 
 The app reads the `PORT` env var, so it also works on any host that uses a
-`Procfile` (Railway, Heroku-style platforms, etc.). Cloud hosts can reach Yahoo
-Finance, so you'll get **real live data** there (during market hours).
+`Procfile` (Railway, Heroku-style platforms, etc.).
+
+> **Data sources:** intraday (same-day) data comes from Yahoo Finance. Yahoo
+> often throttles requests from cloud/datacenter IPs, so on hosts like Render
+> the app automatically falls back to [Stooq](https://stooq.com) for daily data
+> (no API key needed). This means deployed instances reliably show daily
+> analysis (including the 50/200-day MAs); same-day intraday works when Yahoo is
+> reachable (e.g. running locally). The data source used is shown on each card.
 
 > Note: Render's free tier sleeps after inactivity, so the first request after a
 > while may take ~30s to wake the service.
